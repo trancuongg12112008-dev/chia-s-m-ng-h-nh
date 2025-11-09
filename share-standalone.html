@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chia Sẻ Màn Hình</title>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #fff;
+        }
+
+        .controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            font-size: 1em;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+            margin: 0 10px;
+        }
+
+        .btn-start {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-start:hover {
+            background: #45a049;
+        }
+
+        .btn-stop {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-stop:hover {
+            background: #da190b;
+        }
+
+        .btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        .status {
+            text-align: center;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            font-weight: 600;
+        }
+
+        .status.waiting {
+            background: #ff9800;
+        }
+
+        .status.sharing {
+            background: #4CAF50;
+        }
+
+        .status.error {
+            background: #f44336;
+        }
+
+        #localVideo {
+            width: 100%;
+            max-width: 100%;
+            border-radius: 10px;
+            background: #000;
+            display: none;
+        }
+
+        .info {
+            text-align: center;
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+        }
+
+        .peer-id {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            word-break: break-all;
+            font-family: monospace;
+        }
+
+        .copy-btn {
+            background: #2196F3;
+            color: white;
+            padding: 8px 15px;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+
+        .copy-btn:hover {
+            background: #1976D2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖥️ Chia Sẻ Màn Hình Của Bạn</h1>
+        
+        <div class="controls">
+            <button id="startBtn" class="btn btn-start">Bắt Đầu Chia Sẻ</button>
+            <button id="stopBtn" class="btn btn-stop" disabled>Dừng Chia Sẻ</button>
+        </div>
+
+        <div id="status" class="status waiting">Chưa chia sẻ - Nhấn "Bắt Đầu Chia Sẻ" để bắt đầu</div>
+
+        <video id="localVideo" autoplay muted playsinline></video>
+
+        <div class="info">
+            <p><strong>📱 Chia sẻ ID này cho người xem:</strong></p>
+            <div class="peer-id" id="peerId">Đang tạo ID...</div>
+            <button class="btn copy-btn" onclick="copyPeerId()">📋 Sao Chép ID</button>
+            <p style="margin-top: 15px; font-size: 0.9em; color: #ccc;">
+                Người xem cần nhập ID này vào trang xem để kết nối
+            </p>
+        </div>
+    </div>
+
+    <script>
+        let peer = null;
+        let localStream = null;
+        let currentCall = null;
+        const peerIdDisplay = document.getElementById('peerId');
+        const localVideo = document.getElementById('localVideo');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        let myPeerId = null;
+
+        // Khởi tạo PeerJS
+        function initPeer() {
+            peer = new Peer({
+                host: '0.peerjs.com',
+                port: 443,
+                path: '/',
+                secure: true
+            });
+
+            peer.on('open', (id) => {
+                myPeerId = id;
+                peerIdDisplay.textContent = id;
+                status.textContent = 'Sẵn sàng chia sẻ - Nhấn "Bắt Đầu Chia Sẻ"';
+                status.className = 'status waiting';
+                console.log('Peer ID:', id);
+            });
+
+            peer.on('error', (err) => {
+                console.error('Peer error:', err);
+                status.textContent = 'Lỗi kết nối: ' + err.message;
+                status.className = 'status error';
+            });
+
+            // Khi có người kết nối để xem
+            peer.on('call', (call) => {
+                if (localStream) {
+                    call.answer(localStream);
+                    currentCall = call;
+                    status.textContent = 'Đang chia sẻ màn hình với người xem';
+                    status.className = 'status sharing';
+                }
+            });
+        }
+
+        startBtn.addEventListener('click', startSharing);
+        stopBtn.addEventListener('click', stopSharing);
+
+        async function startSharing() {
+            try {
+                if (!peer) {
+                    initPeer();
+                    await new Promise(resolve => {
+                        peer.on('open', resolve);
+                    });
+                }
+
+                status.textContent = 'Đang yêu cầu quyền truy cập màn hình...';
+                status.className = 'status waiting';
+
+                // Yêu cầu quyền truy cập màn hình
+                localStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { cursor: 'always' },
+                    audio: true
+                });
+
+                localVideo.srcObject = localStream;
+                localVideo.style.display = 'block';
+                
+                status.textContent = 'Đang chia sẻ màn hình... (Chờ người xem kết nối)';
+                status.className = 'status sharing';
+                
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+
+                // Xử lý khi stream kết thúc
+                localStream.getVideoTracks()[0].onended = () => {
+                    stopSharing();
+                };
+
+            } catch (error) {
+                console.error('Lỗi khi chia sẻ màn hình:', error);
+                status.textContent = 'Lỗi: ' + error.message;
+                status.className = 'status error';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+
+        function stopSharing() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+
+            if (currentCall) {
+                currentCall.close();
+                currentCall = null;
+            }
+
+            localVideo.srcObject = null;
+            localVideo.style.display = 'none';
+            
+            status.textContent = 'Đã dừng chia sẻ';
+            status.className = 'status waiting';
+            
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+
+        function copyPeerId() {
+            if (myPeerId) {
+                navigator.clipboard.writeText(myPeerId).then(() => {
+                    alert('Đã sao chép ID: ' + myPeerId);
+                }).catch(err => {
+                    console.error('Lỗi khi sao chép:', err);
+                });
+            }
+        }
+
+        // Khởi tạo khi trang load
+        initPeer();
+    </script>
+</body>
+</html>
+
